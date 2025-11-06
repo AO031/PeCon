@@ -1,0 +1,6 @@
+LRBRARY
+	EXPORTS
+		Myadd @2 
+		Mysub @3 noname
+		Mymul @5
+		Mydiv @7
