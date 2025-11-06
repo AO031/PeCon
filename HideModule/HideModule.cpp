@@ -3,6 +3,7 @@
 #include <Windows.h>
 #include <TlHelp32.h>
 #include <stdlib.h>
+#include <iostream>
 #include "PEparser.h"
 #include "PETools.h"
 
@@ -40,9 +41,12 @@ int main() {
 	char TargetName[MAX_PATH] = { 0 };
 	WORD TargetPID = 65535;
 	char Input[127] = { 0 };
-
-
 	printf("===============LIB INJECK===============\n");
+	printf("   ___   ____   ___    ____  ___\n");
+	printf("  / _ | / __ \\ / _ \\  |_  / <  /\n");
+	printf(" / __ |/ /_/ // // / _/_ <  / / \n");
+	printf("/_/ |_|\\____/ \\___/ /____/ /_/  \n");
+	printf("                                \n");
 	printf("Choose Target(1:Name 2:PID)\n");
 	printf("Choose:");
 	if (!fgets(Input, 127, stdin)) {

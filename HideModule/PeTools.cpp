@@ -110,7 +110,7 @@ BOOL FixImport(PE_CONTEXT* pctx)
 		PBYTE dllnameaddr = (PBYTE)VirtualAllocEx(
 			pctx->RemoteHandle,
 			NULL,
-			strlen(dllname) + 0x1,
+			strlen(dllname) + 0x10,
 			MEM_COMMIT | MEM_RESERVE,
 			PAGE_READWRITE
 		);
@@ -123,7 +123,7 @@ BOOL FixImport(PE_CONTEXT* pctx)
 
 
 #if defined(_WIN64)
-		unsigned char shellcode[] = {
+		unsigned char LoadShellcode[] = {
 			0x51,												// push rcx
 			0x52,												// push rdx
 			0x41,0x50,											// push r8
@@ -143,11 +143,11 @@ BOOL FixImport(PE_CONTEXT* pctx)
 			0x59,												// pop rcx
 			0xc3												// ret
 		};														
-		*(ULONGLONG*)&shellcode[13] = (ULONGLONG)dllnameaddr;
-		*(ULONGLONG*)&shellcode[35] = (ULONGLONG)dllnameaddr;
-		*(ULONGLONG*)&shellcode[23] = (ULONGLONG)loadlibraryaddr;
+		*(ULONGLONG*)&LoadShellcode[13] = (ULONGLONG)dllnameaddr;
+		*(ULONGLONG*)&LoadShellcode[35] = (ULONGLONG)dllnameaddr;
+		*(ULONGLONG*)&LoadShellcode[23] = (ULONGLONG)loadlibraryaddr;
 #else
-		unsigned char shellcode[] = {
+		unsigned char LoadShellcode[] = {
 			0x55,						// push ebp
 			0x89,0xe5,					// mov ebp, esp
 			0xff,0x75,0x08,				// push [ebp+8]
@@ -159,19 +159,19 @@ BOOL FixImport(PE_CONTEXT* pctx)
 			0x5d,						// pop ebp
 			0xc2,0x04,0x00				// ret 4 
 		};
-		*(DWORD*)&shellcode[7] = (DWORD)loadlibraryaddr;
-		*(DWORD*)&shellcode[14] = (DWORD)dllnameaddr;
+		*(DWORD*)&LoadShellcode[7] = (DWORD)loadlibraryaddr;
+		*(DWORD*)&LoadShellcode[14] = (DWORD)dllnameaddr;
 #endif //defined(_WIN64)
 		
-		LPVOID shellcodeaddr = (LPVOID)VirtualAllocEx(
+		LPVOID LoadShellcodeAddr = (LPVOID)VirtualAllocEx(
 			pctx->RemoteHandle,
 			NULL,
-			sizeof(shellcode) + 0x10,
+			sizeof(LoadShellcode) + 0x10,
 			MEM_COMMIT | MEM_RESERVE,
 			PAGE_EXECUTE_READWRITE
 		);
 
-		if (!shellcodeaddr) {
+		if (!LoadShellcodeAddr) {
 			printf("alloc fail\n");
 			EraseTraces(pctx);
 			return FALSE;
@@ -190,9 +190,9 @@ BOOL FixImport(PE_CONTEXT* pctx)
 		}
 		if (!WriteProcessMemory(
 			pctx->RemoteHandle,
-			shellcodeaddr,
-			shellcode,
-			sizeof(shellcode),
+			LoadShellcodeAddr,
+			LoadShellcode,
+			sizeof(LoadShellcode),
 			NULL
 		)) {
 			printf("ERROR:Can't write in remote process,error code:%d\n", GetLastError());
@@ -200,36 +200,209 @@ BOOL FixImport(PE_CONTEXT* pctx)
 			return FALSE;
 		}
 		
-		
-		HANDLE hThread = CreateRemoteThread(
+		HANDLE hLoadThread = CreateRemoteThread(
 			pctx->RemoteHandle,
 			NULL,
 			0x1000,
-			(LPTHREAD_START_ROUTINE)shellcodeaddr,
+			(LPTHREAD_START_ROUTINE)LoadShellcodeAddr,
 			dllnameaddr,
 			0,
 			NULL		
 		);
 
-		if (hThread) {
-			WaitForSingleObject(hThread, INFINITE);
+		size_t dllbaseRe = 0;
+		if (hLoadThread) {
+			WaitForSingleObject(hLoadThread, INFINITE);
 			DWORD lpExitCode = 0;
-			GetExitCodeThread(hThread, &lpExitCode);
-			size_t dllbase = 0;
-			ReadProcessMemory(
+			GetExitCodeThread(hLoadThread, &lpExitCode);
+			if (!ReadProcessMemory(
 				pctx->RemoteHandle,
 				dllnameaddr,
-				&dllbase,
+				&dllbaseRe,
 				sizeof(size_t),
 				NULL
-			);
-			CloseHandle(hThread);
+			)) {
+				printf("ERROR:Can't injeck shellcode to get dllbase,dllname:%s\n", dllname);
+			}
+			CloseHandle(hLoadThread);
 		}
 
+		if (!dllbaseRe) {
+			printf("WARRING:Can't injeck shellcode to get dllbase,dllname:%s\n", dllname);
+			EraseTraces(pctx);
+			pImport++;
+			continue; // sometimes there is no dll
+		}
+
+		// getprocaddress and fix IAT
+		FARPROC getaddr = GetProcAddress(hkernel32, "GetProcAddress");
+
+#if defined(_WIN64)
+		unsigned char GetProcShellcode[] = {
+			0x50,												// push rax
+			0x51,												// push rcx
+			0x52,												// push rdx
+			0x41,0x50,											// push r8
+			0x41,0x51,											// push r9
+			0x55,												// push rbp
+			0x48,0x89,0xe5,										// mov rbp, rsp
+			0x48,0x83,0xec,0x28,								// sub rsp, 0x28
+			0x48,0x8b,0x51,0x08,								// mov rdx, [rcx+8]
+			0x48,0x8b,0x09,										// mov rcx, [rcx]
+			0x48,0xb8,0xf0,0xde,0xbc,0x9a,0x78,0x56,0x34,0x12,	// mov rax, 0x123456789abcdef0 ;getprocaddress
+			0xff,0xd0,											// call rax
+			0x48,0xb9,0x11,0x11,0x11,0x11,0x11,0x11,0x11,0x11,	// mov rcx, 0x1111111111111111 ;dllname
+			0x48,0x89,0x01,										// mov [rcx], rax
+			0x48,0x83,0xc4,0x28,								// add rsp, 0x28
+			0x48,0x89,0xec,										// mov rsp, rbp
+			0x5d,												// pop rbp
+			0x41,0x59,											// pop r9
+			0x41,0x58,											// pop r8
+			0x5a,												// pop rdx
+			0x59,												// pop rcx
+			0x58,												// pop rax
+			0xc3												// ret
+		};
+		*(ULONGLONG*)&GetProcShellcode[24] = (ULONGLONG)getaddr;
+		*(ULONGLONG*)&GetProcShellcode[36] = (ULONGLONG)dllnameaddr;
+
+#else
+		unsigned char GetProcShellcode[] = {
+			0x55,						// push ebp
+			0x89,0xe5,					// mov ebp, esp
+			0x8b,0x4d,0x08,				// mov ecx, [ebp+8]
+			0xff,0x71,0x04,				// push [ecx+4] ;name or ord
+			0xff,0x31,					// push [ecx] ;dllbaseRe
+			0xb8,0xff,0xff,0xff,0x7f,	// mov eax, 0x7fffffff ;getprocaddress
+			0xff,0xd0,					// call eax
+			0xb9,0x78,0x56,0x34,0x12,	// mov ecx, 0x12345678 ;dllnamere
+			0x89,0x01,					// mov [ecx], eax
+			0x89,0xec,					// mov esp, ebp
+			0x5d,						// pop ebp
+			0xc2,0x04,0x00				// ret 4 
+		};
+		*(DWORD*)&GetProcShellcode[12] = (DWORD)getaddr;
+		*(DWORD*)&GetProcShellcode[19] = (DWORD)dllnameaddr;
+#endif //defined(_WIN64)
+
+		PIMAGE_THUNK_DATA pINT = NULL;
+		PIMAGE_THUNK_DATA pIAT = (PIMAGE_THUNK_DATA)(pctx->ImageBuffer + pImport->FirstThunk);
+		if (pImport->OriginalFirstThunk) {
+			pINT = (PIMAGE_THUNK_DATA)(pctx->ImageBuffer + pImport->OriginalFirstThunk);
+		}
+		else {
+			pINT = pIAT;
+		}
+	
+		while (pINT->u1.AddressOfData) {
+			struct {
+				HMODULE dllbase;
+				LPCSTR NameOrd;
+			} param = {(HMODULE)dllbaseRe,NULL};
+
+			if (IMAGE_SNAP_BY_ORDINAL(pINT->u1.AddressOfData)) {
+				param.NameOrd = (LPCSTR)IMAGE_ORDINAL(pINT->u1.AddressOfData);
+			}
+			else {
+				PIMAGE_IMPORT_BY_NAME pImportByName = (PIMAGE_IMPORT_BY_NAME)(pctx->ImageBuffer + pINT->u1.AddressOfData);
+				param.NameOrd = (LPCSTR)((size_t)pImportByName->Name + (size_t)pctx->RemoteBaseAddress - (size_t)pctx->ImageBuffer);
+				// HINT: must be remote
+			}
+		
+			LPVOID ParamAddrRe = (LPVOID)VirtualAllocEx(
+				pctx->RemoteHandle,
+				NULL,
+				sizeof(param),
+				MEM_COMMIT | MEM_RESERVE,
+				PAGE_READWRITE
+			);
+			
+			if (!ParamAddrRe) {
+				printf("ERROR:can't alloc param\n");
+				EraseTraces(pctx);
+				return FALSE;
+			}
+
+			if (!WriteProcessMemory(
+				pctx->RemoteHandle,
+				ParamAddrRe,
+				&param,
+				sizeof(param),
+				NULL
+			)) {
+				printf("ERROR:can't write param\n");
+				EraseTraces(pctx);
+				return FALSE;
+			}
+
+			PBYTE GetProcShellcodeAddr = (PBYTE)VirtualAllocEx(
+				pctx->RemoteHandle,
+				NULL,
+				sizeof(GetProcShellcode),
+				MEM_COMMIT | MEM_RESERVE,
+				PAGE_EXECUTE_READWRITE
+			);
+			if (!GetProcShellcodeAddr) {
+				printf("ERROR:can't alloc shellcode\n");
+				EraseTraces(pctx);
+				return FALSE;
+			}
+
+			if (!WriteProcessMemory(
+				pctx->RemoteHandle,
+				GetProcShellcodeAddr,
+				&GetProcShellcode,
+				sizeof(GetProcShellcode),
+				NULL
+			)) {
+				printf("ERROR:can't write getshellcode\n");
+				EraseTraces(pctx);
+				return FALSE;
+			}
+
+			HANDLE hGetThread = CreateRemoteThread(
+				pctx->RemoteHandle,
+				NULL,
+				0x1000,
+				(LPTHREAD_START_ROUTINE)GetProcShellcodeAddr,
+				ParamAddrRe,
+				0,
+				NULL
+			);
+
+			size_t FunaddrRe = 0;
+			if (hGetThread) {
+				WaitForSingleObject(hGetThread, INFINITE);
+				DWORD lpExitCode = 0;
+				GetExitCodeThread(hGetThread, &lpExitCode);
+				if (!ReadProcessMemory(
+					pctx->RemoteHandle,
+					dllnameaddr,
+					&FunaddrRe,
+					sizeof(size_t),
+					NULL
+				)) {
+					printf("ERROR:Can't injeck shellcode to get Funaddr\n");
+				}
+				CloseHandle(hGetThread);
+			}
+
+			if (!WriteProcessMemory(
+				pctx->RemoteHandle,
+				(LPVOID)((size_t)pIAT + (size_t)pctx->RemoteBaseAddress - (size_t)pctx->ImageBuffer),
+				&FunaddrRe,
+				sizeof(size_t),
+				NULL
+			)) {
+				printf("ERROR:Can't injeck shellcode to get Funaddr\n");
+			}
+			pINT++;
+			pIAT++;
+		}
 		pImport++;
 	}
                                                                                                                                                                                                   
-	return 0;
+	return TRUE;
 }
 
 BOOL FixRelocation(PE_CONTEXT* pctx)
