@@ -36,7 +36,10 @@ WORD FindPIDByName(const char* TargeName){
 int main() {
 	// D:\code\CTF\re\PeCon\Debug\PEdll.dll
 	// D:\code\CTF\re\PeCon\x64\Debug\PEdll.dll
-
+	
+	// D:\code\CTF\re\PeCon\Debug\IDEdll.dll
+	// D:\code\CTF\re\PeCon\x64\Debug\IDEdll.dll
+	 
 	char libpath[MAX_PATH] = { 0 };
 	char TargetName[MAX_PATH] = { 0 };
 	WORD TargetPID = 65535;

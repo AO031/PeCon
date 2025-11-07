@@ -61,7 +61,11 @@ BOOL MapDllToProcess(WORD ProcessId, PE_CONTEXT* pctx)
 		return FALSE;
 	}
 
-	//ExcuteDllEntry
+	if (!ExcuteDllEntry(pctx)) {
+		printf("ERROR:Can't excute dllmain dir\n");
+		EraseTraces(pctx);
+		return FALSE;
+	}
 
 	return TRUE;
 }
@@ -225,6 +229,7 @@ BOOL FixImport(PE_CONTEXT* pctx)
 				printf("ERROR:Can't injeck shellcode to get dllbase,dllname:%s\n", dllname);
 			}
 			CloseHandle(hLoadThread);
+			printf("INFO:shellcode get dll base,dll name->%s\n", dllname);
 		}
 
 		if (!dllbaseRe) {
@@ -283,7 +288,7 @@ BOOL FixImport(PE_CONTEXT* pctx)
 		};
 		*(DWORD*)&GetProcShellcode[12] = (DWORD)getaddr;
 		*(DWORD*)&GetProcShellcode[19] = (DWORD)dllnameaddr;
-#endif //defined(_WIN64)
+#endif //_WIN64
 
 		PIMAGE_THUNK_DATA pINT = NULL;
 		PIMAGE_THUNK_DATA pIAT = (PIMAGE_THUNK_DATA)(pctx->ImageBuffer + pImport->FirstThunk);
@@ -292,6 +297,7 @@ BOOL FixImport(PE_CONTEXT* pctx)
 		}
 		else {
 			pINT = pIAT;
+			continue;
 		}
 	
 		while (pINT->u1.AddressOfData) {
@@ -302,10 +308,12 @@ BOOL FixImport(PE_CONTEXT* pctx)
 
 			if (IMAGE_SNAP_BY_ORDINAL(pINT->u1.AddressOfData)) {
 				param.NameOrd = (LPCSTR)IMAGE_ORDINAL(pINT->u1.AddressOfData);
+				printf("\tINFO:FunOrd->%d", IMAGE_ORDINAL(pINT->u1.AddressOfData));
 			}
 			else {
 				PIMAGE_IMPORT_BY_NAME pImportByName = (PIMAGE_IMPORT_BY_NAME)(pctx->ImageBuffer + pINT->u1.AddressOfData);
 				param.NameOrd = (LPCSTR)((size_t)pImportByName->Name + (size_t)pctx->RemoteBaseAddress - (size_t)pctx->ImageBuffer);
+				printf("\tINFO:FunName->%s\n", pImportByName->Name);
 				// HINT: must be remote
 			}
 		
@@ -385,17 +393,20 @@ BOOL FixImport(PE_CONTEXT* pctx)
 					printf("ERROR:Can't injeck shellcode to get Funaddr\n");
 				}
 				CloseHandle(hGetThread);
+				printf("\tINFO: Remote fun addr->0x%p\n", FunaddrRe);
 			}
 
 			if (!WriteProcessMemory(
 				pctx->RemoteHandle,
 				(LPVOID)((size_t)pIAT + (size_t)pctx->RemoteBaseAddress - (size_t)pctx->ImageBuffer),
 				&FunaddrRe,
-				sizeof(size_t),
+				sizeof(LPVOID),
 				NULL
 			)) {
-				printf("ERROR:Can't injeck shellcode to get Funaddr\n");
+				printf("ERROR:Can't injeck shellcode to get Funaddr");
 			}
+			printf("\tINFO: fix IAT->0x%p\n", ((size_t)pIAT + (size_t)pctx->RemoteBaseAddress - (size_t)pctx->ImageBuffer));
+			printf("\tINFO: fix INT->0x%p\n", ((size_t)pINT + (size_t)pctx->RemoteBaseAddress - (size_t)pctx->ImageBuffer));
 			pINT++;
 			pIAT++;
 		}
@@ -488,5 +499,135 @@ BOOL FixRelocation(PE_CONTEXT* pctx)
 
 BOOL ExcuteDllEntry(PE_CONTEXT* pctx)
 {
+	if (!pctx || pctx->RemoteBaseAddress == 0) {
+		printf("ERROR:what param\n");
+		return FALSE;
+	}
+
+	PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER)pctx->ImageBuffer;
+	if (pDosHeader->e_magic != IMAGE_DOS_SIGNATURE) {
+		printf("ERROR:IS NOT A PE FILE,WRONG DOS HEADER\n");
+		EraseTraces(pctx);
+		return FALSE;
+	}
+
+	PIMAGE_NT_HEADERS pNtHeaders = (PIMAGE_NT_HEADERS)
+		(pctx->ImageBuffer + pDosHeader->e_lfanew);
+	if (pNtHeaders->Signature != IMAGE_NT_SIGNATURE) {
+		printf("ERROR:IS NOT A PE FILE,WRONG NT HEADER\n");
+		EraseTraces(pctx);
+		return FALSE;
+	}
+
+	// get entry
+	DWORD DllMainEntry = pNtHeaders->OptionalHeader.AddressOfEntryPoint;
+	if (!DllMainEntry) {
+		printf("THIS FILE DON'T HAVE DLLMAIN\n");
+		return TRUE;
+	}
+
+	// shellcode
+#if defined(_WIN64)
+	unsigned char shellcode[] = {
+		0x50,												// push rax
+		0x51,												// push rcx
+		0x52,												// push rdx
+		0x41,0x50,											// push r8
+		0x41,0x51,											// push r9
+		0x55,												// push rbp
+		0x48,0x89,0xe5,										// mov rbp, rsp
+		0x48,0x83,0xec,0x30,								// sub rsp, 0x30
+		0x48,0x8b,0x51,0x08,								// mov rdx, [rcx+8]
+		0x48,0x8b,0x09,										// mov rcx, [rcx]
+		0x48,0xb8,0xf0,0xde,0xbc,0x9a,0x78,0x56,0x34,0x12,	// mov rax, 0x123456789abcdef0 ;dllmain
+		0xff,0xd0,											// call rax
+		0x48,0x83,0xc4,0x30,								// add rsp, 0x30
+		0x48,0x89,0xec,										// mov rsp, rbp
+		0x5d,												// pop rbp
+		0x41,0x59,											// pop r9
+		0x41,0x58,											// pop r8
+		0x5a,												// pop rdx
+		0x59,												// pop rcx
+		0x58,												// pop rax
+		0xc3												// ret
+	};
+	*(ULONGLONG*)&shellcode[24] = (ULONGLONG)(pctx->RemoteBaseAddress + DllMainEntry);
+#else
+
+#endif //_WIN64
+
+	LPVOID ShellcodeAddr = VirtualAllocEx(
+		pctx->RemoteHandle,
+		NULL,
+		sizeof(shellcode),
+		MEM_COMMIT | MEM_RESERVE,
+		PAGE_EXECUTE_READWRITE
+	);
+	if (!ShellcodeAddr) {
+		printf("ERROR:can't alloc in remote process\n");
+		EraseTraces(pctx);
+		return FALSE;
+	}
+	if (!WriteProcessMemory(
+		pctx->RemoteHandle,
+		ShellcodeAddr,
+		&shellcode,
+		sizeof(shellcode),
+		NULL
+	)) {
+		printf("ERROR: Can't write shell code\n");
+		EraseTraces(pctx);
+		return FALSE;
+	}
+
+	struct {
+		HMODULE hModule;
+		size_t reasonforcall;
+	} param = {(HMODULE)pctx->RemoteBaseAddress,DLL_PROCESS_ATTACH};
+
+
+	LPVOID ParamAddr = VirtualAllocEx(
+		pctx->RemoteHandle,
+		NULL,
+		sizeof(param),
+		MEM_COMMIT | MEM_RESERVE,
+		PAGE_READWRITE
+	);
+	if (!ParamAddr) {
+		printf("ERROR:can't alloc in remote process\n");
+		EraseTraces(pctx);
+		return FALSE;
+	}
+	if (!WriteProcessMemory(
+		pctx->RemoteHandle,
+		ParamAddr,
+		&param,
+		sizeof(param),
+		NULL
+	)) {
+		printf("ERROR: Can't write shell code\n");
+		EraseTraces(pctx);
+		return FALSE;
+	}
+
+
+	HANDLE hThread = CreateRemoteThread(
+		pctx->RemoteHandle,
+		NULL,
+		0x1000,
+		(LPTHREAD_START_ROUTINE)ShellcodeAddr,
+		ParamAddr,
+		0,
+		NULL
+	);
+	
+	if (hThread) {
+		WaitForSingleObject(hThread, INFINITE);
+		DWORD lpExitCode = 0;
+		GetExitCodeThread(hThread, &lpExitCode);
+		CloseHandle(hThread);
+		printf("EXCUTE SHELLCODE:EXIT CODE:0x%p\n", lpExitCode);
+	}
+
 	return TRUE;
 }
