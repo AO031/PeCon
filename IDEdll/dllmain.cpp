@@ -12,7 +12,7 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     switch (ul_reason_for_call)
     {
     case DLL_PROCESS_ATTACH:
-        MessageBox(0, 0, L"Load", 0);
+        MessageBox(0, L"Success,What a great Winter!@!", L"Load", 0);
         dw = 2;
         break;
     case DLL_THREAD_ATTACH:

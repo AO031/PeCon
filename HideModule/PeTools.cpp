@@ -449,16 +449,19 @@ BOOL FixRelocation(PE_CONTEXT* pctx)
 	while (pRelocation->SizeOfBlock != 0) {
 		PBYTE lpbaseRe = pctx->RemoteBaseAddress + pRelocation->VirtualAddress;
 		PWORD RelocOffset = (PWORD)(((PBYTE)pRelocation) + sizeof(IMAGE_BASE_RELOCATION));
-
-		BYTE type = (*RelocOffset) >> 12;
-		WORD offset = (*RelocOffset) & 0xFFF;
-		size_t Delta = pctx->RemoteBaseAddress - pctx->ImageBuffer;
-
+		size_t Delta = (size_t)pctx->RemoteBaseAddress - (size_t)pNtHeaders->OptionalHeader.ImageBase;
+		printf("reloc virtual addr:%p\n", pRelocation->VirtualAddress);
 		while (*RelocOffset){
+			BYTE type = (*RelocOffset) >> 12;
+			WORD offset = (*RelocOffset) & 0xFFF;
+			
+
 			switch (type) {
 			case IMAGE_REL_BASED_HIGHLOW: {
-				DWORD value = (*(pctx->ImageBuffer + pRelocation->VirtualAddress + offset) + Delta);
-
+				DWORD oldvalue = *(DWORD*)(pctx->ImageBuffer + pRelocation->VirtualAddress + offset);
+				DWORD value = oldvalue + Delta;
+				
+				printf("\tINFO:Reloca addr->%p,value->%p\n", lpbaseRe + offset, value);
 				if (!WriteProcessMemory(
 					pctx->RemoteHandle,
 					lpbaseRe + offset,
@@ -472,8 +475,10 @@ BOOL FixRelocation(PE_CONTEXT* pctx)
 				break;
 			}
 			case IMAGE_REL_BASED_DIR64: {
-				ULONGLONG value = (*(pctx->ImageBuffer + pRelocation->VirtualAddress + offset) + Delta);
+				ULONGLONG oldvalue = *(ULONGLONG*)(pctx->ImageBuffer + pRelocation->VirtualAddress + offset);
+				ULONGLONG value = oldvalue + Delta;
 
+				printf("INFO:Reloca addr->%p,value->%p\n", lpbaseRe + offset, value);
 				if (!WriteProcessMemory(
 					pctx->RemoteHandle,
 					lpbaseRe + offset,
@@ -493,6 +498,7 @@ BOOL FixRelocation(PE_CONTEXT* pctx)
 
 		pRelocation = (PIMAGE_BASE_RELOCATION)((PBYTE)pRelocation + pRelocation->SizeOfBlock);
 	}
+
 
 	return TRUE;
 }
@@ -529,7 +535,6 @@ BOOL ExcuteDllEntry(PE_CONTEXT* pctx)
 	// shellcode
 #if defined(_WIN64)
 	unsigned char shellcode[] = {
-		0x50,												// push rax
 		0x51,												// push rcx
 		0x52,												// push rdx
 		0x41,0x50,											// push r8
@@ -548,12 +553,23 @@ BOOL ExcuteDllEntry(PE_CONTEXT* pctx)
 		0x41,0x58,											// pop r8
 		0x5a,												// pop rdx
 		0x59,												// pop rcx
-		0x58,												// pop rax
 		0xc3												// ret
 	};
-	*(ULONGLONG*)&shellcode[24] = (ULONGLONG)(pctx->RemoteBaseAddress + DllMainEntry);
+	*(ULONGLONG*)&shellcode[23] = (ULONGLONG)(pctx->RemoteBaseAddress + DllMainEntry);
 #else
-
+	unsigned char shellcode[] = {
+			0x55,						// push ebp
+			0x89,0xe5,					// mov ebp, esp
+			0x8b,0x4d,0x08,				// mov ecx, [ebp+8]
+			0xff,0x71,0x04,				// push [ecx+4] ;reasonforcall
+			0xff,0x31,					// push [ecx] ;remotebase
+			0xb8,0xff,0xff,0xff,0x7f,	// mov eax, 0x7fffffff ;dllname
+			0xff,0xd0,					// call eax
+			0x89,0xec,					// mov esp, ebp
+			0x5d,						// pop ebp
+			0xc2,0x04,0x00				// ret 4 
+	};
+	*(DWORD*)&shellcode[12] = (DWORD)(pctx->RemoteBaseAddress+DllMainEntry);
 #endif //_WIN64
 
 	LPVOID ShellcodeAddr = VirtualAllocEx(
