@@ -139,6 +139,7 @@ VOID HexDump(const CHAR* filename) {
 	return;
 }
 
+
 HANDLE g_hFile = INVALID_HANDLE_VALUE;
 DWORD g_dwFileSize = 0;
 PBYTE g_lpFileBuffer = NULL;
@@ -147,6 +148,7 @@ PIMAGE_DOS_HEADER g_DosHeader = NULL;
 PIMAGE_NT_HEADERS g_NtHeaders = NULL;
 PIMAGE_SECTION_HEADER g_SectionHeader = NULL;
 BOOL g_RUNNING = TRUE;
+
 
 VOID FreeLoadedFile();
 VOID CmdLoad(CONST CHAR* param);
@@ -159,6 +161,7 @@ VOID CmdExport(CONST CHAR* param);
 VOID CmdShowExportFunByName(CONST CHAR* param);
 VOID CmdShowExportFunByIndex(CONST CHAR* param);
 VOID CmdRelocation(CONST CHAR* param);
+VOID CmdResource(CONST CHAR* param);
 VOID CmdFileToImage(CONST CHAR* param);
 VOID CmdImageToFile(CONST CHAR* param);
 VOID CmdMyLoadLibraryA(CONST CHAR* param);
@@ -168,6 +171,7 @@ VOID CmdFoa(CONST CHAR* param);
 VOID CmdClear(CONST CHAR* param);
 VOID CmdHelp(CONST CHAR* param);
 VOID CmdExit(CONST CHAR* param);
+
 
 DWORD Rva2Foa(DWORD rva);
 DWORD Foa2Rva(DWORD foa);
@@ -181,6 +185,9 @@ BOOL FixImport(PBYTE lpImageBuffer);
 BOOL FixRelocation(PBYTE lpImageBuffer, uintptr_t dwDelta);
 FARPROC MyGetProcAddressByName(HMODULE dllbase, CONST CHAR* funcname);
 FARPROC MyGetProcAddressByOrd(HMODULE dllbase, DWORD Ord);
+VOID ParseResourceDir(PIMAGE_RESOURCE_DIRECTORY pResource, WORD level, size_t ResBaserva);
+
+
 
 typedef VOID (*CmdHandler)(CONST CHAR* param);
 CmdHandler Findhandler(CONST CHAR* param);
@@ -189,7 +196,6 @@ typedef struct {
 	CHAR szpath[MAX_PATH];
 	PBYTE dllbase;
 	DWORD ImageSize;
-
 }LOAD_LIB,*PLOAD_LIB;
 
 #define MAX_LOAD 16
@@ -220,12 +226,14 @@ static CmdEntry CmdTable[] = {
 	{"rva",CmdRva},
 	{"foa",CmdFoa},
 	{"relocation",CmdRelocation},
+	{"resource",CmdResource},
 	{"clear",CmdClear},
 	{"help",CmdHelp},
 	{"exit",CmdExit},
 	{"q",CmdExit},
 	{NULL,NULL}
 };
+
 
 VOID ShowMenu() {
 	printf("%s\n", "P======================================E");
@@ -239,6 +247,7 @@ VOID ShowMenu() {
 	printf("%s\n", "- ShowExportFunByName");
 	printf("%s\n", "- ShowExportFunByIndex");
 	printf("%s\n", "- relocation");
+	printf("%s\n", "- resource");
 	printf("%s\n", "- filetoimage");
 	printf("%s\n", "- imagetofile");
 	printf("%s\n", "- MyLoadLibraryA");
@@ -281,11 +290,12 @@ VOID ProcessCommend() {
 
 int main() {
 
-	// HexDump("D:\\code\\CTF\\re\\PeCon\\x64\\Debug\\InstDrv.exe");
 	// D:\code\CTF\re\PeCon\x64\Debug\111.exe
 	// D:\\code\\CTF\\re\\PeCon\\x64\\Debug\\PEdll.dll
 	// D:\code\CTF\re\PeCon\Debug\PEdll.dll
 	// C:\Windows\System32\kernel32.dll
+	// D:\code\CTF\re\PeCon\x64\Debug\InstDrv.exe
+	// D:\x96dbg\snapshot_2025-08-19_19-40\release\x64\x64dbg.exe
 	
 	/*
 	CHAR file1path[MAX_PATH] = { 0 };
@@ -324,7 +334,6 @@ int main() {
 	return 0;
 }
 
-
 VOID FreeLoadedFile()
 {
 	if (g_lpFileBuffer) {
@@ -344,7 +353,6 @@ VOID FreeLoadedFile()
 
 	return VOID();
 }
-
 
 VOID CmdLoad(const CHAR* param)
 {
@@ -433,12 +441,10 @@ VOID CmdLoad(const CHAR* param)
 	printf("size of file is 0x%08X\n", dwFileSize);
 }
 
-
 VOID CmdInfo(const CHAR* param)
 {
 	return VOID();
 }
-
 
 VOID CmdDos(const CHAR* param)
 {
@@ -451,7 +457,6 @@ VOID CmdDos(const CHAR* param)
 	printf("e_magic is 0x%04X    // Magic number\n", g_DosHeader->e_magic);
 	printf("e_lfanew is 0x%04X   // File address of new exe header\n",g_DosHeader->e_lfanew);
 }
-
 
 VOID CmdNt(const CHAR* param)
 {
@@ -487,8 +492,7 @@ VOID CmdNt(const CHAR* param)
 	}
 	}
 }
-                
-
+               
 VOID CmdSection(const CHAR* param)
 {
 	if (!g_SectionHeader) {
@@ -519,7 +523,6 @@ VOID CmdSection(const CHAR* param)
 	}
 	return VOID();
 }
-
 
 VOID CmdImport(const CHAR* param)
 {
@@ -582,7 +585,6 @@ VOID CmdImport(const CHAR* param)
 	return VOID();
 }
 
-
 VOID CmdExport(const CHAR* param)
 {
 	if (!g_NtHeaders) {
@@ -637,7 +639,6 @@ VOID CmdExport(const CHAR* param)
 	
 }
 
-
 VOID CmdShowExportFunByName(const CHAR* param)
 {
 	if (!g_NtHeaders) {
@@ -687,7 +688,6 @@ VOID CmdShowExportFunByName(const CHAR* param)
 
 	return VOID();
 }
-
 
 VOID CmdShowExportFunByIndex(const CHAR* param)
 {
@@ -758,7 +758,6 @@ VOID CmdShowExportFunByIndex(const CHAR* param)
 	return VOID();
 }
 
-
 VOID CmdRelocation(const CHAR* param)
 {
 	if (!g_NtHeaders) {
@@ -800,6 +799,31 @@ VOID CmdRelocation(const CHAR* param)
 	}
 }
 
+VOID CmdResource(const CHAR* param)
+{
+	if (!g_NtHeaders) {
+		printf("ERROR:Can't find loaded file.!@!\n");
+		return;
+	}
+
+	PIMAGE_OPTIONAL_HEADER pOptionalHeader = &g_NtHeaders->OptionalHeader;
+	PIMAGE_DATA_DIRECTORY pDataDirectorys = (PIMAGE_DATA_DIRECTORY)&pOptionalHeader->DataDirectory;
+
+	if (pDataDirectorys[IMAGE_DIRECTORY_ENTRY_RESOURCE].Size == 0 || pDataDirectorys[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress == 0) {
+		printf("ERROR: This file don't have resource!@!\n");
+		return;
+	}
+
+	PIMAGE_RESOURCE_DIRECTORY pResourceDir =
+		(PIMAGE_RESOURCE_DIRECTORY)(g_lpFileBuffer + Rva2Foa(pDataDirectorys[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress));
+	
+	puts("- Type");
+	puts("- Name");
+	puts("- Language");
+	ParseResourceDir(pResourceDir, 0, Rva2Foa(pDataDirectorys[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress));
+
+	return VOID();
+}
 
 VOID CmdFileToImage(const CHAR* param)
 {
@@ -818,7 +842,6 @@ VOID CmdFileToImage(const CHAR* param)
 
 	return VOID();
 }
-
 
 VOID CmdImageToFile(const CHAR* param)
 {
@@ -840,7 +863,6 @@ VOID CmdImageToFile(const CHAR* param)
 	return VOID();
 }
 
-
 VOID CmdMyLoadLibraryA(const CHAR* param)
 {
 	if (*param == '\0') {
@@ -851,7 +873,7 @@ VOID CmdMyLoadLibraryA(const CHAR* param)
 	for (DWORD i = 0;i < g_dwLoadedModulecnt;i++) {
 		if (!strcmp(param, g_LoadModules[i].szpath)) {
 			printf("ERROR:This Library Is Loaded\n");
-			printf("LIB BASE:%p\n", g_LoadModules[i].dllbase);
+			printf("LIB BASE:0x%p\n", g_LoadModules[i].dllbase);
 			printf("LIB SIZE:%04X\n", g_LoadModules[i].ImageSize);
 			return;
 		}
@@ -878,9 +900,9 @@ VOID CmdMyLoadLibraryA(const CHAR* param)
 
 	PIMAGE_BASE_RELOCATION pRelocation = (PIMAGE_BASE_RELOCATION)(lpImageBuffer + pDataDirectorys[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
 
-	printf("LIB BASE:%p\n", lpImageBuffer);
+	printf("LIB BASE:0x%p\n", lpImageBuffer);
 	printf("LIB SIZE:%04X\n", dwImageSize);
-	printf("LIB RELOCATION:%p\n", pRelocation);
+	printf("LIB RELOCATION:0x%p\n", pRelocation);
 
 	strncpy(g_LoadModules[g_dwLoadedModulecnt].szpath, param, MAX_PATH - 1);
 	g_LoadModules[g_dwLoadedModulecnt].szpath[MAX_PATH - 1] = '\0';
@@ -890,7 +912,6 @@ VOID CmdMyLoadLibraryA(const CHAR* param)
 
 	return VOID();
 }
-
 
 VOID CmdMyGetProcAddress(const CHAR* param)
 {
@@ -949,7 +970,6 @@ VOID CmdMyGetProcAddress(const CHAR* param)
 	return VOID();
 }
 
-
 DWORD Rva2Foa(DWORD rva) {
 	if (!g_SectionHeader) {
 		printf("ERROR:Don't load file\n");
@@ -966,7 +986,6 @@ DWORD Rva2Foa(DWORD rva) {
 	printf("ERROR:WRONG ADDRESS\n");
 	return 0;
 }
-
 
 DWORD Foa2Rva(DWORD foa) {
 	if (!g_SectionHeader) {
@@ -985,7 +1004,6 @@ DWORD Foa2Rva(DWORD foa) {
 	printf("ERROR:WRONG ADDRESS\n");
 	return 0;
 }
-
 
 PBYTE GetFunAddrByName(const CHAR* Funname)
 {
@@ -1026,7 +1044,6 @@ PBYTE GetFunAddrByName(const CHAR* Funname)
 
 	return 0;
 }
-
 
 DWORD GetFunAddrByIndex(WORD idx)
 {
@@ -1073,7 +1090,6 @@ DWORD GetFunAddrByIndex(WORD idx)
 	return FunAddr;
 }
 
-
 PBYTE Filebuffer2Imagebuffer(PBYTE lpFileBuffer)
 {
 	if (!lpFileBuffer) return NULL;
@@ -1116,7 +1132,6 @@ PBYTE Filebuffer2Imagebuffer(PBYTE lpFileBuffer)
 
 	return (PBYTE)lpImageBuffer;
 }
-
 
 PBYTE Imagebuffer2Filebuffer(PBYTE lpImageBuffer, PDWORD pFileSize)
 {
@@ -1173,7 +1188,6 @@ PBYTE Imagebuffer2Filebuffer(PBYTE lpImageBuffer, PDWORD pFileSize)
 	return (PBYTE)lpFileBuffer;
 }
 
-
 BOOL SaveBufferToFile(const CHAR* filepath, PBYTE lpBuffer, DWORD dwBufferSize)
 {
 	if (*filepath == 0 || !lpBuffer || dwBufferSize == 0) return FALSE;
@@ -1201,7 +1215,6 @@ BOOL SaveBufferToFile(const CHAR* filepath, PBYTE lpBuffer, DWORD dwBufferSize)
 
 	return TRUE;
 }
-
 
 PBYTE MyLoadLibraryA(const CHAR* dllpath,DWORD* ImageSize)
 {
@@ -1317,7 +1330,6 @@ PBYTE MyLoadLibraryA(const CHAR* dllpath,DWORD* ImageSize)
 	return lpImageBuffer;
 }
 
-
 BOOL FixImport(PBYTE lpImageBuffer)
 {
 	PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER)lpImageBuffer;
@@ -1394,7 +1406,6 @@ BOOL FixImport(PBYTE lpImageBuffer)
 	return TRUE;
 }
 
-
 BOOL FixRelocation(PBYTE lpImageBuffer, uintptr_t Delta)
 {
 	PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER)lpImageBuffer;
@@ -1435,7 +1446,6 @@ BOOL FixRelocation(PBYTE lpImageBuffer, uintptr_t Delta)
 	return TRUE;
 }
 
-
 FARPROC MyGetProcAddressByName(HMODULE dllbase, const CHAR* funname)
 {
 	PBYTE lpImageBuffer = (PBYTE)dllbase;
@@ -1470,7 +1480,6 @@ FARPROC MyGetProcAddressByName(HMODULE dllbase, const CHAR* funname)
 	return FARPROC();
 }
 
-
 FARPROC MyGetProcAddressByOrd(HMODULE dllbase, DWORD Ord)
 {
 	PBYTE lpImageBuffer = (PBYTE)dllbase;
@@ -1503,6 +1512,89 @@ FARPROC MyGetProcAddressByOrd(HMODULE dllbase, DWORD Ord)
 	return (FARPROC)(lpImageBuffer+ pAddressOfFunctions[Index]);
 }
 
+VOID ParseResourceDir(PIMAGE_RESOURCE_DIRECTORY pResource, WORD level, size_t ResBasefoa)
+{
+	if (!pResource) {
+		return;
+	}
+
+	char indent[0x10] = "";
+	for (size_t i = 0; i < level; i++) {
+		strcat(indent, "\t");
+	}
+
+	DWORD NumberOfNamed = pResource->NumberOfNamedEntries;
+	DWORD NumberOfId = pResource->NumberOfIdEntries;
+
+	PIMAGE_RESOURCE_DIRECTORY_ENTRY pResourceDirEntry =
+		(PIMAGE_RESOURCE_DIRECTORY_ENTRY)((PBYTE)pResource+sizeof(IMAGE_RESOURCE_DIRECTORY));
+
+	for (size_t i = 0;i < NumberOfNamed;i++) {
+		if (pResourceDirEntry[i].Name & IMAGE_RESOURCE_NAME_IS_STRING) {
+			printf("%sName offset is 0x%p\n", indent, pResourceDirEntry[i].Name);
+			PIMAGE_RESOURCE_DIR_STRING_U pResourceDirString = 
+				(PIMAGE_RESOURCE_DIR_STRING_U)(g_lpFileBuffer +
+					ResBasefoa +
+					(pResourceDirEntry[i].Name & ~IMAGE_RESOURCE_NAME_IS_STRING)
+					);
+
+			printf("%sName is ", indent);
+			fflush(stdout);  
+			wprintf(L"%ls\n", pResourceDirString->NameString);
+
+			printf("%soffset is 0x%p\n", indent, pResourceDirEntry[i].OffsetToData);
+			if (pResourceDirEntry[i].OffsetToData & IMAGE_RESOURCE_DATA_IS_DIRECTORY && level < 2) {
+				PIMAGE_RESOURCE_DIRECTORY pNewResource =
+					(PIMAGE_RESOURCE_DIRECTORY)(g_lpFileBuffer +
+						ResBasefoa +
+						(pResourceDirEntry[i].OffsetToData & ~IMAGE_RESOURCE_DATA_IS_DIRECTORY)
+						);
+				ParseResourceDir(
+					pNewResource,
+					level + 1,
+					ResBasefoa
+				);
+			}
+		}
+
+
+		if (level == 2) {
+			PIMAGE_RESOURCE_DATA_ENTRY pResourceData =
+				(PIMAGE_RESOURCE_DATA_ENTRY)(g_lpFileBuffer +
+					ResBasefoa +
+					pResourceDirEntry[i].OffsetToData
+					);
+			printf("\t\t\tSource offset is 0x%04X\n", pResourceData->OffsetToData);
+			printf("\t\t\tSource size is 0x%04X\n", pResourceData->Size);
+		}
+	}
+
+	for (size_t i = NumberOfNamed;i < NumberOfNamed + NumberOfId;i++) {
+		printf("%sid is 0x%p\n",indent,pResourceDirEntry[i].Id);
+		printf("%soffset is 0x%p\n", indent, pResourceDirEntry[i].OffsetToData);
+		if (pResourceDirEntry[i].OffsetToData & IMAGE_RESOURCE_DATA_IS_DIRECTORY && level < 2) {
+			PIMAGE_RESOURCE_DIRECTORY pNewResource = 
+				(PIMAGE_RESOURCE_DIRECTORY)(g_lpFileBuffer +
+					ResBasefoa +
+					(pResourceDirEntry[i].OffsetToData & ~IMAGE_RESOURCE_DATA_IS_DIRECTORY)
+			);
+			ParseResourceDir(
+				pNewResource,
+				level + 1,
+				ResBasefoa
+			);
+		}
+		if (level == 2) {
+			PIMAGE_RESOURCE_DATA_ENTRY pResourceData =
+				(PIMAGE_RESOURCE_DATA_ENTRY)(g_lpFileBuffer +
+					ResBasefoa +
+					pResourceDirEntry[i].OffsetToData
+			);
+			printf("\t\t\tSource offset is 0x%04X\n", pResourceData->OffsetToData);
+			printf("\t\t\tSource size is 0x%04X\n", pResourceData->Size);
+		}
+	}
+}
 
 VOID CmdRva(const CHAR* param)
 {
@@ -1547,7 +1639,6 @@ VOID CmdRva(const CHAR* param)
 	return;
 }
 
-
 VOID CmdFoa(const CHAR* param)
 {
 	if (!g_SectionHeader) {
@@ -1591,25 +1682,21 @@ VOID CmdFoa(const CHAR* param)
 	return;
 }
 
-
 VOID CmdClear(const CHAR* param)
 {
 	return VOID();
 }
-
 
 VOID CmdHelp(const CHAR* param)
 {
 	return VOID();
 }
 
-
 VOID CmdExit(const CHAR* param)
 {
 	g_RUNNING = FALSE;
 	return VOID();
 }
-
 
 CmdHandler Findhandler(const CHAR* cmd)
 {
