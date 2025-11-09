@@ -448,13 +448,15 @@ BOOL FixRelocation(PE_CONTEXT* pctx)
 	PIMAGE_BASE_RELOCATION pRelocation = (PIMAGE_BASE_RELOCATION)(pctx->ImageBuffer + pDataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
 	while (pRelocation->SizeOfBlock != 0) {
 		PBYTE lpbaseRe = pctx->RemoteBaseAddress + pRelocation->VirtualAddress;
-		PWORD RelocOffset = (PWORD)(((PBYTE)pRelocation) + sizeof(IMAGE_BASE_RELOCATION));
+		PWORD RelocOffset = (PWORD)((PBYTE)pRelocation + sizeof(IMAGE_BASE_RELOCATION));
 		size_t Delta = (size_t)pctx->RemoteBaseAddress - (size_t)pNtHeaders->OptionalHeader.ImageBase;
+		size_t NumberOfReloc = (pRelocation->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
+
 		printf("reloc virtual addr:%p\n", pRelocation->VirtualAddress);
-		while (*RelocOffset){
-			BYTE type = (*RelocOffset) >> 12;
-			WORD offset = (*RelocOffset) & 0xFFF;
-			
+		
+		for (size_t i = 0;i < NumberOfReloc;i++) {
+			BYTE type = RelocOffset[i] >> 12;
+			WORD offset = RelocOffset[i] & 0xFFF;
 
 			switch (type) {
 			case IMAGE_REL_BASED_HIGHLOW: {
@@ -492,8 +494,6 @@ BOOL FixRelocation(PE_CONTEXT* pctx)
 				break;
 			}
 			}
-
-			RelocOffset++;
 		}
 
 		pRelocation = (PIMAGE_BASE_RELOCATION)((PBYTE)pRelocation + pRelocation->SizeOfBlock);
