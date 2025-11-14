@@ -27,7 +27,6 @@ BOOL IsPeFile(CONST CHAR* filePath){
 	return TRUE;
 }
 
-
 VOID CompareFileByBin(CONST CHAR* file1path, CONST CHAR* file2path)
 {
 	PUCHAR szBuffer1 = NULL;
@@ -98,7 +97,6 @@ VOID CompareFileByBin(CONST CHAR* file1path, CONST CHAR* file2path)
 	return;
 }
 
-
 VOID HexAscii(const byte* data, size_t offset, size_t length) {
 	char ascii[17] = { 0 };
 	ascii[16] = '\x00';
@@ -121,7 +119,6 @@ VOID HexAscii(const byte* data, size_t offset, size_t length) {
 
 }
 
-
 VOID HexDump(const CHAR* filename) {
 	FILE* pFile = fopen(filename, "rb");
 
@@ -139,7 +136,6 @@ VOID HexDump(const CHAR* filename) {
 	return;
 }
 
-
 HANDLE g_hFile = INVALID_HANDLE_VALUE;
 DWORD g_dwFileSize = 0;
 PBYTE g_lpFileBuffer = NULL;
@@ -148,7 +144,7 @@ PIMAGE_DOS_HEADER g_DosHeader = NULL;
 PIMAGE_NT_HEADERS g_NtHeaders = NULL;
 PIMAGE_SECTION_HEADER g_SectionHeader = NULL;
 BOOL g_RUNNING = TRUE;
-
+#define MAX_LOAD 16
 
 VOID FreeLoadedFile();
 VOID CmdLoad(CONST CHAR* param);
@@ -162,6 +158,7 @@ VOID CmdShowExportFunByName(CONST CHAR* param);
 VOID CmdShowExportFunByIndex(CONST CHAR* param);
 VOID CmdRelocation(CONST CHAR* param);
 VOID CmdResource(CONST CHAR* param);
+VOID CmdException(CONST CHAR* param);
 VOID CmdFileToImage(CONST CHAR* param);
 VOID CmdImageToFile(CONST CHAR* param);
 VOID CmdMyLoadLibraryA(CONST CHAR* param);
@@ -171,7 +168,6 @@ VOID CmdFoa(CONST CHAR* param);
 VOID CmdClear(CONST CHAR* param);
 VOID CmdHelp(CONST CHAR* param);
 VOID CmdExit(CONST CHAR* param);
-
 
 DWORD Rva2Foa(DWORD rva);
 DWORD Foa2Rva(DWORD foa);
@@ -187,8 +183,6 @@ FARPROC MyGetProcAddressByName(HMODULE dllbase, CONST CHAR* funcname);
 FARPROC MyGetProcAddressByOrd(HMODULE dllbase, DWORD Ord);
 VOID ParseResourceDir(PIMAGE_RESOURCE_DIRECTORY pResource, WORD level, size_t ResBaserva);
 
-
-
 typedef VOID (*CmdHandler)(CONST CHAR* param);
 CmdHandler Findhandler(CONST CHAR* param);
 
@@ -197,18 +191,13 @@ typedef struct {
 	PBYTE dllbase;
 	DWORD ImageSize;
 }LOAD_LIB,*PLOAD_LIB;
-
-#define MAX_LOAD 16
-
 LOAD_LIB g_LoadModules[MAX_LOAD] = { 0 };
-
 DWORD g_dwLoadedModulecnt = 0;
 
 typedef struct{
 	CONST CHAR* cmd;
 	CmdHandler handler;
 }CmdEntry;
-
 static CmdEntry CmdTable[] = {
 	{"load",CmdLoad},
 	{"info",CmdInfo},
@@ -226,6 +215,7 @@ static CmdEntry CmdTable[] = {
 	{"rva",CmdRva},
 	{"foa",CmdFoa},
 	{"relocation",CmdRelocation},
+	{"exception",CmdException},
 	{"resource",CmdResource},
 	{"clear",CmdClear},
 	{"help",CmdHelp},
@@ -234,6 +224,38 @@ static CmdEntry CmdTable[] = {
 	{NULL,NULL}
 };
 
+
+typedef union _UNWIND_CODE {
+	struct {
+		BYTE CodeOffset;     // 在函数中相对于 Prolog 起始处的偏移量，指定该操作的开始位置  
+		BYTE UnwindOp : 4;   // 展开操作类型，属于 UNWIND_OP_CODES 之一  
+		BYTE OpInfo : 4;   // 补充信息，根据不同的 UnwindOp 含义不同  
+	};
+	USHORT FrameOffset;       // 某些操作直接用来描述栈帧内偏移的值  
+} UNWIND_CODE, * PUNWIND_CODE;
+typedef enum _UNWIND_OP_CODES {
+	UWOP_PUSH_NONVOL = 0, /* info == register number */
+	UWOP_ALLOC_LARGE,     /* no info, alloc size in next 2 slots */
+	UWOP_ALLOC_SMALL,     /* info == size of allocation / 8 - 1 */
+	UWOP_SET_FPREG,       /* no info, FP = RSP + UNWIND_INFO.FPRegOffset*16 */
+	UWOP_SAVE_NONVOL,     /* info == register number, offset in next slot */
+	UWOP_SAVE_NONVOL_FAR, /* info == register number, offset in next 2 slots */
+	UWOP_SAVE_XMM128 = 8, /* info == XMM reg number, offset in next slot */
+	UWOP_SAVE_XMM128_FAR, /* info == XMM reg number, offset in next 2 slots */
+	UWOP_PUSH_MACHFRAME   /* info == 0: no error-code, 1: error-code */
+} UNWIND_CODE_OPS;
+typedef struct _UNWIND_INFO {
+	UCHAR Version : 3;           // 版本号（通常为1）  
+	UCHAR Flags : 5;             // 标志（如是否包含异常处理程序）
+	UCHAR SizeOfProlog;          // 函数序言（Prolog）的字节数  
+	UCHAR CountOfCodes;          // 展开代码条目数量（数组中 UNWIND_CODE 个数）  
+	UCHAR FrameRegister : 4;     // 帧指针寄存器（如 RBP、RDI 等）  
+	UCHAR FrameOffset : 4;     // 帧指针偏移，用 16 字节单位（FP = RSP + FrameOffset * 16）  
+	UNWIND_CODE UnwindCode[1];   // 不定长度数组，描述具体的栈展开操作  
+	// 后续紧跟可选字段：  
+	// 1. 如果设置了 UNW_FLAG_EHANDLER 或 UNW_FLAG_UHANDLER，则紧跟有 ExceptionHandler 和 ExceptionData。  
+	// 2. 如果设置了 UNW_FLAG_CHAININFO，则后续为一个 RUNTIME_FUNCTION 结构。  
+} UNWIND_INFO, * PUNWIND_INFO;
 
 VOID ShowMenu() {
 	printf("%s\n", "P======================================E");
@@ -249,6 +271,7 @@ VOID ShowMenu() {
 	printf("%s\n", "- relocation");
 	printf("%s\n", "- resource");
 	printf("%s\n", "- filetoimage");
+	printf("%s\n", "- exception");
 	printf("%s\n", "- imagetofile");
 	printf("%s\n", "- MyLoadLibraryA");
 	printf("%s\n", "- MyGetProcAddress");
@@ -260,7 +283,6 @@ VOID ShowMenu() {
 	printf("\n");
 	printf("%s", "input >");
 }
-
 
 VOID ProcessCommend() {
 	char cmdline[0xFFF] = { 0 };
@@ -284,19 +306,20 @@ VOID ProcessCommend() {
 	}
 }
 
-
 // typedef int(__cdecl* pFun)(int, int);
 // using pFun = int(*)(int, int);
 
 int main() {
 
-	// D:\code\CTF\re\PeCon\x64\Debug\111.exe
-	// D:\\code\\CTF\\re\\PeCon\\x64\\Debug\\PEdll.dll
-	// D:\code\CTF\re\PeCon\Debug\PEdll.dll
-	// C:\Windows\System32\kernel32.dll
-	// D:\code\CTF\re\PeCon\x64\Debug\InstDrv.exe
-	// D:\x96dbg\snapshot_2025-08-19_19-40\release\x64\x64dbg.exe
-	
+	{
+		// D:\code\CTF\re\PeCon\x64\Debug\111.exe
+		// D:\\code\\CTF\\re\\PeCon\\x64\\Debug\\PEdll.dll
+		// D:\code\CTF\re\PeCon\Debug\PEdll.dll
+		// C:\Windows\System32\kernel32.dll
+		// D:\code\CTF\re\PeCon\x64\Debug\InstDrv.exe
+		// D:\x96dbg\snapshot_2025-08-19_19-40\release\x64\x64dbg.exe
+	}
+
 	/*
 	CHAR file1path[MAX_PATH] = { 0 };
 	CHAR file2path[MAX_PATH] = { 0 };
@@ -821,6 +844,46 @@ VOID CmdResource(const CHAR* param)
 	puts("- Name");
 	puts("- Language");
 	ParseResourceDir(pResourceDir, 0, Rva2Foa(pDataDirectorys[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress));
+
+	return VOID();
+}
+
+VOID CmdException(const CHAR* param)
+{
+#ifndef _WIN64
+	printf("x86 don't exist exception dir!@!\n");
+	return VOID();
+#endif // !_WIN64
+	if (!g_NtHeaders) {
+		printf("ERROR:Can't find loaded file.!@!\n");
+		return;
+	}
+
+	PIMAGE_OPTIONAL_HEADER pOptionalHeader = &g_NtHeaders->OptionalHeader;
+	PIMAGE_DATA_DIRECTORY pDataDirectorys = (PIMAGE_DATA_DIRECTORY)&pOptionalHeader->DataDirectory;
+
+	if (pDataDirectorys[IMAGE_DIRECTORY_ENTRY_EXCEPTION].Size == 0 || 
+		pDataDirectorys[IMAGE_DIRECTORY_ENTRY_EXCEPTION].VirtualAddress == 0) {
+		printf("ERROR: This file don't have Exception!@!\n");
+		return;
+	}
+
+	PIMAGE_RUNTIME_FUNCTION_ENTRY pRuntime = (PIMAGE_RUNTIME_FUNCTION_ENTRY)(g_lpFileBuffer + Rva2Foa(pDataDirectorys[IMAGE_DIRECTORY_ENTRY_EXCEPTION].VirtualAddress));
+	size_t Runtimecount = pDataDirectorys[IMAGE_DIRECTORY_ENTRY_EXCEPTION].Size / sizeof(IMAGE_RUNTIME_FUNCTION_ENTRY);
+	printf("Runtime Funcition Entry Count is %d\n", Runtimecount);
+	for (size_t i = 0; i < Runtimecount; i++) {
+		printf("Runtime Funcition Entry:%d\n", i);
+		printf("Begin Address rva is 0x%p\n", pRuntime[i].BeginAddress);
+		printf("End Address rva is 0x%p\n", pRuntime[i].EndAddress);
+
+		PUNWIND_INFO pUnwindinfo = (PUNWIND_INFO)(g_lpFileBuffer + Rva2Foa(pRuntime[i].UnwindData));
+		printf("\tFlags is %p\n", pUnwindinfo->Flags);
+		printf("\tCountOfCodes is %d\n", pUnwindinfo->CountOfCodes);
+
+
+
+		printf("\n");
+	}
 
 	return VOID();
 }
@@ -1528,7 +1591,7 @@ VOID ParseResourceDir(PIMAGE_RESOURCE_DIRECTORY pResource, WORD level, size_t Re
 
 	PIMAGE_RESOURCE_DIRECTORY_ENTRY pResourceDirEntry =
 		(PIMAGE_RESOURCE_DIRECTORY_ENTRY)((PBYTE)pResource+sizeof(IMAGE_RESOURCE_DIRECTORY));
-
+	
 	for (size_t i = 0;i < NumberOfNamed;i++) {
 		if (pResourceDirEntry[i].Name & IMAGE_RESOURCE_NAME_IS_STRING) {
 			printf("%sName offset is 0x%p\n", indent, pResourceDirEntry[i].Name);

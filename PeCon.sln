@@ -11,6 +11,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HideModule", "HideModule\Hi
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "IDEdll", "IDEdll\IDEdll.vcxproj", "{AD8B24CE-BA7B-4E3E-99DE-FB923530D917}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Test", "Test\Test.vcxproj", "{825C4E3B-419E-414E-9564-9F4693EEDE31}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -51,6 +53,14 @@ Global
 		{AD8B24CE-BA7B-4E3E-99DE-FB923530D917}.Release|x64.Build.0 = Release|x64
 		{AD8B24CE-BA7B-4E3E-99DE-FB923530D917}.Release|x86.ActiveCfg = Release|Win32
 		{AD8B24CE-BA7B-4E3E-99DE-FB923530D917}.Release|x86.Build.0 = Release|Win32
+		{825C4E3B-419E-414E-9564-9F4693EEDE31}.Debug|x64.ActiveCfg = Debug|x64
+		{825C4E3B-419E-414E-9564-9F4693EEDE31}.Debug|x64.Build.0 = Debug|x64
+		{825C4E3B-419E-414E-9564-9F4693EEDE31}.Debug|x86.ActiveCfg = Debug|Win32
+		{825C4E3B-419E-414E-9564-9F4693EEDE31}.Debug|x86.Build.0 = Debug|Win32
+		{825C4E3B-419E-414E-9564-9F4693EEDE31}.Release|x64.ActiveCfg = Release|x64
+		{825C4E3B-419E-414E-9564-9F4693EEDE31}.Release|x64.Build.0 = Release|x64
+		{825C4E3B-419E-414E-9564-9F4693EEDE31}.Release|x86.ActiveCfg = Release|Win32
+		{825C4E3B-419E-414E-9564-9F4693EEDE31}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
