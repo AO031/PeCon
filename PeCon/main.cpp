@@ -1,4 +1,5 @@
 #define _CRT_SECURE_NO_WARNINGS
+
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -251,7 +252,7 @@ typedef struct _UNWIND_INFO {
 	UCHAR CountOfCodes;          // 展开代码条目数量（数组中 UNWIND_CODE 个数）  
 	UCHAR FrameRegister : 4;     // 帧指针寄存器（如 RBP、RDI 等）  
 	UCHAR FrameOffset : 4;     // 帧指针偏移，用 16 字节单位（FP = RSP + FrameOffset * 16）  
-	UNWIND_CODE UnwindCode[1];   // 不定长度数组，描述具体的栈展开操作  
+	// UNWIND_CODE UnwindCode[1];   // 不定长度数组，描述具体的栈展开操作  
 	// 后续紧跟可选字段：  
 	// 1. 如果设置了 UNW_FLAG_EHANDLER 或 UNW_FLAG_UHANDLER，则紧跟有 ExceptionHandler 和 ExceptionData。  
 	// 2. 如果设置了 UNW_FLAG_CHAININFO，则后续为一个 RUNTIME_FUNCTION 结构。  
@@ -313,7 +314,6 @@ int main() {
 
 	{
 		// D:\code\CTF\re\PeCon\x64\Debug\111.exe
-		// D:\\code\\CTF\\re\\PeCon\\x64\\Debug\\PEdll.dll
 		// D:\code\CTF\re\PeCon\Debug\PEdll.dll
 		// C:\Windows\System32\kernel32.dll
 		// D:\code\CTF\re\PeCon\x64\Debug\InstDrv.exe
@@ -462,6 +462,17 @@ VOID CmdLoad(const CHAR* param)
 
 	printf("\nload file success!\n");
 	printf("size of file is 0x%08X\n", dwFileSize);
+#ifdef _WIN64
+	if (g_NtHeaders->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+		printf("ERROR:Can't use x64 program parse x86\n");
+		FreeLoadedFile();
+	}
+#else
+	if (g_NtHeaders->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
+		printf("ERROR:Can't use x86 program parse x64\n");
+		FreeLoadedFile();
+	}
+#endif // _WIN64
 }
 
 VOID CmdInfo(const CHAR* param)
@@ -852,13 +863,13 @@ VOID CmdException(const CHAR* param)
 {
 #ifndef _WIN64
 	printf("x86 don't exist exception dir!@!\n");
-	return VOID();
-#endif // !_WIN64
+	return ;
+
 	if (!g_NtHeaders) {
 		printf("ERROR:Can't find loaded file.!@!\n");
 		return;
 	}
-
+#else
 	PIMAGE_OPTIONAL_HEADER pOptionalHeader = &g_NtHeaders->OptionalHeader;
 	PIMAGE_DATA_DIRECTORY pDataDirectorys = (PIMAGE_DATA_DIRECTORY)&pOptionalHeader->DataDirectory;
 
@@ -880,12 +891,26 @@ VOID CmdException(const CHAR* param)
 		printf("\tFlags is %p\n", pUnwindinfo->Flags);
 		printf("\tCountOfCodes is %d\n", pUnwindinfo->CountOfCodes);
 
+		if (pUnwindinfo->Flags & UNW_FLAG_EHANDLER) {
+			DWORD AlignCount = (pUnwindinfo->CountOfCodes + 1) & ~0x1;
+			PDWORD pC_SPEC_HANDLE = (PDWORD)((PBYTE)(pUnwindinfo+1) + AlignCount * sizeof(UNWIND_CODE));
+			printf("\tException Handle(__except_handler3) rva is %p\n", *pC_SPEC_HANDLE);
 
+			PSCOPE_TABLE pScopetable = (PSCOPE_TABLE)((PBYTE)(pC_SPEC_HANDLE + 1));
 
-		printf("\n");
+			for (size_t j = 0; j < pScopetable->Count; j++) {
+				printf("\t\tTry begin address is %p\n", pScopetable->ScopeRecord[j].BeginAddress);
+				printf("\t\tTry end address is %p\n", pScopetable->ScopeRecord[j].EndAddress);
+				printf("\t\tTry filter address is %p\n", pScopetable->ScopeRecord[j].HandlerAddress);
+				printf("\t\tTry-except address is %p\n", pScopetable->ScopeRecord[j].JumpTarget);
+				printf("\n");
+			}
+		}
+		printf("\n\n");
 	}
 
 	return VOID();
+#endif // !_WIN64
 }
 
 VOID CmdFileToImage(const CHAR* param)
