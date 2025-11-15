@@ -4,7 +4,11 @@
 #include <ctype.h>
 #include <string.h>
 #include <Windows.h>
+#include <WinTrust.h>
+
    
+#pragma warning(disable:4477)
+#pragma warning(disable:4313)
 
 BOOL IsPeFile(CONST CHAR* filePath){
 	FILE* pFile = fopen(filePath, "rb");
@@ -159,16 +163,17 @@ VOID CmdShowExportFunByName(CONST CHAR* param);
 VOID CmdShowExportFunByIndex(CONST CHAR* param);
 VOID CmdRelocation(CONST CHAR* param);
 VOID CmdResource(CONST CHAR* param);
+VOID CmdDebug(CONST CHAR* param);
 VOID CmdException(CONST CHAR* param);
 VOID CmdFileToImage(CONST CHAR* param);
 VOID CmdImageToFile(CONST CHAR* param);
 VOID CmdMyLoadLibraryA(CONST CHAR* param);
 VOID CmdMyGetProcAddress(CONST CHAR* param);
 VOID CmdRva(CONST CHAR* param);
+VOID CmdSecurity(CONST CHAR* param);
 VOID CmdFoa(CONST CHAR* param);
-VOID CmdClear(CONST CHAR* param);
-VOID CmdHelp(CONST CHAR* param);
 VOID CmdExit(CONST CHAR* param);
+
 
 DWORD Rva2Foa(DWORD rva);
 DWORD Foa2Rva(DWORD foa);
@@ -216,10 +221,10 @@ static CmdEntry CmdTable[] = {
 	{"rva",CmdRva},
 	{"foa",CmdFoa},
 	{"relocation",CmdRelocation},
+	{"security",CmdSecurity},
 	{"exception",CmdException},
+	{"debug",CmdDebug},
 	{"resource",CmdResource},
-	{"clear",CmdClear},
-	{"help",CmdHelp},
 	{"exit",CmdExit},
 	{"q",CmdExit},
 	{NULL,NULL}
@@ -234,17 +239,6 @@ typedef union _UNWIND_CODE {
 	};
 	USHORT FrameOffset;       // 某些操作直接用来描述栈帧内偏移的值  
 } UNWIND_CODE, * PUNWIND_CODE;
-typedef enum _UNWIND_OP_CODES {
-	UWOP_PUSH_NONVOL = 0, /* info == register number */
-	UWOP_ALLOC_LARGE,     /* no info, alloc size in next 2 slots */
-	UWOP_ALLOC_SMALL,     /* info == size of allocation / 8 - 1 */
-	UWOP_SET_FPREG,       /* no info, FP = RSP + UNWIND_INFO.FPRegOffset*16 */
-	UWOP_SAVE_NONVOL,     /* info == register number, offset in next slot */
-	UWOP_SAVE_NONVOL_FAR, /* info == register number, offset in next 2 slots */
-	UWOP_SAVE_XMM128 = 8, /* info == XMM reg number, offset in next slot */
-	UWOP_SAVE_XMM128_FAR, /* info == XMM reg number, offset in next 2 slots */
-	UWOP_PUSH_MACHFRAME   /* info == 0: no error-code, 1: error-code */
-} UNWIND_CODE_OPS;
 typedef struct _UNWIND_INFO {
 	UCHAR Version : 3;           // 版本号（通常为1）  
 	UCHAR Flags : 5;             // 标志（如是否包含异常处理程序）
@@ -257,6 +251,13 @@ typedef struct _UNWIND_INFO {
 	// 1. 如果设置了 UNW_FLAG_EHANDLER 或 UNW_FLAG_UHANDLER，则紧跟有 ExceptionHandler 和 ExceptionData。  
 	// 2. 如果设置了 UNW_FLAG_CHAININFO，则后续为一个 RUNTIME_FUNCTION 结构。  
 } UNWIND_INFO, * PUNWIND_INFO;
+
+struct CV_INFO_PDB70 {
+	DWORD Signature; // "RSDS"  
+	GUID Guid;       // 唯一 ID  
+	DWORD Age;       // PDB 文件版本  
+	char PdbName[1];  // PDB 文件路径  
+};
 
 VOID ShowMenu() {
 	printf("%s\n", "P======================================E");
@@ -273,6 +274,8 @@ VOID ShowMenu() {
 	printf("%s\n", "- resource");
 	printf("%s\n", "- filetoimage");
 	printf("%s\n", "- exception");
+	printf("%s\n", "- security");
+	printf("%s\n", "- debug");
 	printf("%s\n", "- imagetofile");
 	printf("%s\n", "- MyLoadLibraryA");
 	printf("%s\n", "- MyGetProcAddress");
@@ -843,7 +846,8 @@ VOID CmdResource(const CHAR* param)
 	PIMAGE_OPTIONAL_HEADER pOptionalHeader = &g_NtHeaders->OptionalHeader;
 	PIMAGE_DATA_DIRECTORY pDataDirectorys = (PIMAGE_DATA_DIRECTORY)&pOptionalHeader->DataDirectory;
 
-	if (pDataDirectorys[IMAGE_DIRECTORY_ENTRY_RESOURCE].Size == 0 || pDataDirectorys[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress == 0) {
+	if (pDataDirectorys[IMAGE_DIRECTORY_ENTRY_RESOURCE].Size == 0 || 
+		pDataDirectorys[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress == 0) {
 		printf("ERROR: This file don't have resource!@!\n");
 		return;
 	}
@@ -859,17 +863,54 @@ VOID CmdResource(const CHAR* param)
 	return VOID();
 }
 
+VOID CmdDebug(const CHAR* param)
+{
+	if (!g_NtHeaders) {
+		printf("ERROR:Can't find loaded file.!@!\n");
+		return;
+	}
+
+	PIMAGE_OPTIONAL_HEADER pOptionalHeader = &g_NtHeaders->OptionalHeader;
+	PIMAGE_DATA_DIRECTORY pDataDirectorys = (PIMAGE_DATA_DIRECTORY)&pOptionalHeader->DataDirectory;
+
+	if (pDataDirectorys[IMAGE_DIRECTORY_ENTRY_DEBUG].Size == 0 ||
+		pDataDirectorys[IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress == 0) {
+		printf("ERROR: This file don't have resource!@!\n");
+		return;
+	}
+
+	PIMAGE_DEBUG_DIRECTORY pDebugDir = (PIMAGE_DEBUG_DIRECTORY)(g_lpFileBuffer +
+		Rva2Foa(pDataDirectorys[IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress));
+	DWORD DirCount = pDataDirectorys[IMAGE_DIRECTORY_ENTRY_DEBUG].Size / sizeof(IMAGE_DEBUG_DIRECTORY);
+
+	for (size_t i = 0; i < DirCount; i++) {
+		printf("The %dth Debug Dir\n", i);
+		printf("\tthis debug dir type is 0x%04X\n", pDebugDir[i].Type);
+		if (pDebugDir[i].Type == IMAGE_DEBUG_TYPE_CODEVIEW) {
+			CV_INFO_PDB70* pCVINFO = (CV_INFO_PDB70*)(g_lpFileBuffer + Rva2Foa(pDebugDir[i].AddressOfRawData));
+			printf("\t\tthis CV_INFO Signature is 0x%08X\n", pCVINFO->Signature);
+			printf("\t\tthis debug pdb path is %s\n", pCVINFO->PdbName);
+		}
+		printf("\tthis debug dir AddressOfRawData is 0x%08X\n", pDebugDir[i].AddressOfRawData);
+		printf("\n");
+	}
+
+
+
+	return VOID();
+}
+
 VOID CmdException(const CHAR* param)
 {
 #ifndef _WIN64
 	printf("x86 don't exist exception dir!@!\n");
 	return ;
 
+#else
 	if (!g_NtHeaders) {
 		printf("ERROR:Can't find loaded file.!@!\n");
 		return;
 	}
-#else
 	PIMAGE_OPTIONAL_HEADER pOptionalHeader = &g_NtHeaders->OptionalHeader;
 	PIMAGE_DATA_DIRECTORY pDataDirectorys = (PIMAGE_DATA_DIRECTORY)&pOptionalHeader->DataDirectory;
 
@@ -911,6 +952,36 @@ VOID CmdException(const CHAR* param)
 
 	return VOID();
 #endif // !_WIN64
+}
+
+VOID CmdSecurity(const CHAR* param)
+{
+	if (!g_NtHeaders) {
+		printf("ERROR:Can't find loaded file.!@!\n");
+		return;
+	}
+	PIMAGE_OPTIONAL_HEADER pOptionalHeader = &g_NtHeaders->OptionalHeader;
+	PIMAGE_DATA_DIRECTORY pDataDirectorys = (PIMAGE_DATA_DIRECTORY)&pOptionalHeader->DataDirectory;
+
+	if (pDataDirectorys[IMAGE_DIRECTORY_ENTRY_SECURITY].Size == 0 ||
+		pDataDirectorys[IMAGE_DIRECTORY_ENTRY_SECURITY].VirtualAddress == 0) {
+		printf("ERROR: This file don't have Exception!@!\n");
+		return;
+	}
+
+	DWORD dwSecurityOffset = pDataDirectorys[IMAGE_DIRECTORY_ENTRY_SECURITY].VirtualAddress;
+	DWORD dwCurrentOffset = pDataDirectorys[IMAGE_DIRECTORY_ENTRY_SECURITY].VirtualAddress;
+	printf("Security Dir offset is 0x%08X\n", pDataDirectorys[IMAGE_DIRECTORY_ENTRY_SECURITY].VirtualAddress);
+	printf("Security Dir size is 0x%08X\n", pDataDirectorys[IMAGE_DIRECTORY_ENTRY_SECURITY].Size);
+
+	while (dwCurrentOffset < dwSecurityOffset + pDataDirectorys[IMAGE_DIRECTORY_ENTRY_SECURITY].Size) {
+		LPWIN_CERTIFICATE lpSecurity = (LPWIN_CERTIFICATE)(g_lpFileBuffer + dwCurrentOffset);
+		printf("\tThis Certificate version is 0x%04X\n", lpSecurity->wRevision);
+		printf("\tThis Certificate type is 0x%04X\n", lpSecurity->wCertificateType);
+		dwCurrentOffset += lpSecurity->dwLength;
+	}
+
+	return VOID();
 }
 
 VOID CmdFileToImage(const CHAR* param)
@@ -1768,16 +1839,6 @@ VOID CmdFoa(const CHAR* param)
 	}
 	printf("ERROR:WRONG ADDRESS\n");
 	return;
-}
-
-VOID CmdClear(const CHAR* param)
-{
-	return VOID();
-}
-
-VOID CmdHelp(const CHAR* param)
-{
-	return VOID();
 }
 
 VOID CmdExit(const CHAR* param)
