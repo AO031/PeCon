@@ -171,6 +171,7 @@ VOID CmdMyLoadLibraryA(CONST CHAR* param);
 VOID CmdMyGetProcAddress(CONST CHAR* param);
 VOID CmdRva(CONST CHAR* param);
 VOID CmdSecurity(CONST CHAR* param);
+VOID CmdTLS(CONST CHAR* param);
 VOID CmdFoa(CONST CHAR* param);
 VOID CmdExit(CONST CHAR* param);
 
@@ -221,6 +222,7 @@ static CmdEntry CmdTable[] = {
 	{"rva",CmdRva},
 	{"foa",CmdFoa},
 	{"relocation",CmdRelocation},
+	{"tls",CmdTLS},
 	{"security",CmdSecurity},
 	{"exception",CmdException},
 	{"debug",CmdDebug},
@@ -274,6 +276,7 @@ VOID ShowMenu() {
 	printf("%s\n", "- resource");
 	printf("%s\n", "- filetoimage");
 	printf("%s\n", "- exception");
+	printf("%s\n", "- tls");
 	printf("%s\n", "- security");
 	printf("%s\n", "- debug");
 	printf("%s\n", "- imagetofile");
@@ -319,7 +322,7 @@ int main() {
 		// D:\code\CTF\re\PeCon\x64\Debug\111.exe
 		// D:\code\CTF\re\PeCon\Debug\PEdll.dll
 		// C:\Windows\System32\kernel32.dll
-		// D:\code\CTF\re\PeCon\x64\Debug\InstDrv.exe
+		// D:\code\CTF\re\PeCon\x64\Debug\Test.exe
 		// D:\x96dbg\snapshot_2025-08-19_19-40\release\x64\x64dbg.exe
 	}
 
@@ -979,6 +982,41 @@ VOID CmdSecurity(const CHAR* param)
 		printf("\tThis Certificate version is 0x%04X\n", lpSecurity->wRevision);
 		printf("\tThis Certificate type is 0x%04X\n", lpSecurity->wCertificateType);
 		dwCurrentOffset += lpSecurity->dwLength;
+	}
+
+	return VOID();
+}
+
+VOID CmdTLS(const CHAR* param)
+{
+	if (!g_NtHeaders) {
+		printf("ERROR:Can't find loaded file.!@!\n");
+		return;
+	}
+	PIMAGE_OPTIONAL_HEADER pOptionalHeader = &g_NtHeaders->OptionalHeader;
+	PIMAGE_DATA_DIRECTORY pDataDirectorys = (PIMAGE_DATA_DIRECTORY)&pOptionalHeader->DataDirectory;
+
+	if (pDataDirectorys[IMAGE_DIRECTORY_ENTRY_TLS].Size == 0 ||
+		pDataDirectorys[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress == 0) {
+		printf("ERROR: This file don't have TLS!@!\n");
+		return;
+	}
+
+	PIMAGE_TLS_DIRECTORY pTLSDir = (PIMAGE_TLS_DIRECTORY)(g_lpFileBuffer
+		+ Rva2Foa(pDataDirectorys[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress)
+	);
+
+
+	printf("TLS StartAddressOfRawData is 0x%p\n", pTLSDir->StartAddressOfRawData);
+	printf("TLS EndAddressOfRawData is 0x%p\n", pTLSDir->EndAddressOfRawData);
+	printf("TLS data is 0x%p\n", pTLSDir->AddressOfIndex);
+	printf("TLS AddressOfCallBacks is 0x%p\n", pTLSDir->AddressOfCallBacks);
+	printf("TLS Characteristics is 0x%p\n", pTLSDir->Characteristics);
+
+	uintptr_t* TLScallbacks = (uintptr_t*)(g_lpFileBuffer + Rva2Foa(pTLSDir->AddressOfCallBacks - pOptionalHeader->ImageBase));
+	
+	for (size_t i = 0; TLScallbacks[i]; i++) {
+		printf("TLS callback function%d,addr->%p\n", i, TLScallbacks[i]);
 	}
 
 	return VOID();
