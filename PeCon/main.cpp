@@ -1006,17 +1006,17 @@ VOID CmdTLS(const CHAR* param)
 		+ Rva2Foa(pDataDirectorys[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress)
 	);
 
-
-	printf("TLS StartAddressOfRawData is 0x%p\n", pTLSDir->StartAddressOfRawData);
-	printf("TLS EndAddressOfRawData is 0x%p\n", pTLSDir->EndAddressOfRawData);
-	printf("TLS data is 0x%p\n", pTLSDir->AddressOfIndex);
-	printf("TLS AddressOfCallBacks is 0x%p\n", pTLSDir->AddressOfCallBacks);
+	// TLS在内存中也长这样，不需要重新定位
+	printf("TLS StartAddressOfRawData(Base ImageBase) is 0x%p\n", pTLSDir->StartAddressOfRawData);
+	printf("TLS EndAddressOfRawData(Base ImageBase) is 0x%p\n", pTLSDir->EndAddressOfRawData);
+	printf("TLS data(Base ImageBase) is 0x%p\n", pTLSDir->AddressOfIndex);
+	printf("TLS AddressOfCallBacks(Base ImageBase) is 0x%p\n", pTLSDir->AddressOfCallBacks);
 	printf("TLS Characteristics is 0x%p\n", pTLSDir->Characteristics);
 
 	uintptr_t* TLScallbacks = (uintptr_t*)(g_lpFileBuffer + Rva2Foa(pTLSDir->AddressOfCallBacks - pOptionalHeader->ImageBase));
 	
 	for (size_t i = 0; TLScallbacks[i]; i++) {
-		printf("TLS callback function%d,addr->%p\n", i, TLScallbacks[i]);
+		printf("TLS callback function%d,addr(Base ImageBase)->%p\n", i, TLScallbacks[i]);
 	}
 
 	return VOID();
