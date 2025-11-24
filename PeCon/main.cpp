@@ -169,6 +169,7 @@ VOID CmdFileToImage(CONST CHAR* param);
 VOID CmdImageToFile(CONST CHAR* param);
 VOID CmdMyLoadLibraryA(CONST CHAR* param);
 VOID CmdMyGetProcAddress(CONST CHAR* param);
+VOID CmdAddNewSection(CONST CHAR* param);
 VOID CmdRva(CONST CHAR* param);
 VOID CmdSecurity(CONST CHAR* param);
 VOID CmdTLS(CONST CHAR* param);
@@ -221,6 +222,7 @@ static CmdEntry CmdTable[] = {
 	{"MyGetProcAddress",CmdMyGetProcAddress},
 	{"rva",CmdRva},
 	{"foa",CmdFoa},
+	{"addnewsection",CmdAddNewSection},
 	{"relocation",CmdRelocation},
 	{"tls",CmdTLS},
 	{"security",CmdSecurity},
@@ -274,6 +276,7 @@ VOID ShowMenu() {
 	printf("%s\n", "- ShowExportFunByIndex");
 	printf("%s\n", "- relocation");
 	printf("%s\n", "- resource");
+	printf("%s\n", "- addnewsection");
 	printf("%s\n", "- filetoimage");
 	printf("%s\n", "- exception");
 	printf("%s\n", "- tls");
@@ -321,6 +324,7 @@ int main() {
 	{
 		// D:\code\CTF\re\PeCon\x64\Debug\111.exe
 		// D:\code\CTF\re\PeCon\Debug\PEdll.dll
+		// D:\code\CTF\re\PeCon\Debug\InstDrv.exe
 		// C:\Windows\System32\kernel32.dll
 		// D:\code\CTF\re\PeCon\x64\Debug\Test.exe
 		// D:\x96dbg\snapshot_2025-08-19_19-40\release\x64\x64dbg.exe
@@ -818,8 +822,8 @@ VOID CmdRelocation(const CHAR* param)
 	while (Relocation->VirtualAddress && Relocation->SizeOfBlock) {
 		printf("This black base addr: 0x%08X\n", Relocation->VirtualAddress);
 		printf("This black size: 0x%08X\n", Relocation->SizeOfBlock);
-		PWORD RelOffsetArray = (PWORD)(((PCHAR)Relocation) + 2 * sizeof(IMAGE_BASE_RELOCATION));
-		for (size_t i = 0;i < (Relocation->SizeOfBlock - 2 * sizeof(DWORD)) / 2;i++) {
+		PWORD RelOffsetArray = (PWORD)((PCHAR)Relocation + sizeof(IMAGE_BASE_RELOCATION));
+		for (size_t i = 0;i < (Relocation->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / 2;i++) {
 			switch (*RelOffsetArray >> 12) {
 			case IMAGE_REL_BASED_ABSOLUTE: 
 				printf("\tThis offset do nothing:0x%04X\n", (*RelOffsetArray) & 0xFFF);
@@ -827,7 +831,7 @@ VOID CmdRelocation(const CHAR* param)
 			case IMAGE_REL_BASED_HIGHLOW:
 				printf("\tThis offset will rel 32bit val:0x%04X\n", (*RelOffsetArray) & 0xFFF);
 				break;
-			case IMAGE_REL_BASED_MACHINE_SPECIFIC_9:
+			case IMAGE_REL_BASED_DIR64:
 				printf("\tThis offset will rel 64bit val:0x%04X\n", (*RelOffsetArray) & 0xFFF);
 				break;
 			default:
@@ -1164,6 +1168,71 @@ VOID CmdMyGetProcAddress(const CHAR* param)
 		}
 	}
 
+	return VOID();
+}
+
+VOID CmdAddNewSection(const CHAR* param)
+{
+	if (!g_NtHeaders || !g_DosHeader || !g_SectionHeader) {
+		printf("Unloaded file !@!\n");
+		return;
+	}
+
+	DWORD ShellSectionSize = 0x500;
+	
+	// 节表数据
+	WORD NumOfSection = g_NtHeaders->FileHeader.NumberOfSections;
+	WORD FileAlignment = g_NtHeaders->OptionalHeader.FileAlignment;
+	WORD ImageAlignment = g_NtHeaders->OptionalHeader.SectionAlignment;
+	
+	PIMAGE_SECTION_HEADER pLastSection = (PIMAGE_SECTION_HEADER)&g_SectionHeader[NumOfSection - 1];
+	PIMAGE_SECTION_HEADER pNewSection = (PIMAGE_SECTION_HEADER)&g_SectionHeader[NumOfSection];
+	
+	DWORD SizeOfFile = (pLastSection->PointerToRawData + pLastSection->SizeOfRawData + FileAlignment - 1) & ~(FileAlignment - 1);
+	DWORD NewFileSize = (SizeOfFile + ShellSectionSize + FileAlignment - 1) & ~(FileAlignment - 1);
+	
+	DWORD SizeOfImage = (pLastSection->VirtualAddress + pLastSection->Misc.VirtualSize + ImageAlignment - 1)
+		& ~(ImageAlignment - 1);
+	DWORD NewImageSize = (SizeOfImage + ShellSectionSize +  ImageAlignment - 1)
+		& ~(ImageAlignment - 1);
+
+
+	const char* NewSectionName = ".shell\0\0";
+
+	PBYTE tempBuffer = (PBYTE)realloc(g_lpFileBuffer, NewFileSize);
+	if (!tempBuffer) {
+		printf("Realloc fail,Bad Luck\n");
+		return;
+	}
+	g_lpFileBuffer = tempBuffer;
+
+	g_DosHeader = (PIMAGE_DOS_HEADER)g_lpFileBuffer;
+	g_NtHeaders = (PIMAGE_NT_HEADERS)((PBYTE)g_DosHeader + g_DosHeader->e_lfanew);
+	g_SectionHeader = (PIMAGE_SECTION_HEADER)IMAGE_FIRST_SECTION(g_NtHeaders);
+
+	pNewSection = (PIMAGE_SECTION_HEADER)&g_SectionHeader[NumOfSection];
+
+	strcpy_s((PCHAR)&pNewSection->Name, 8, NewSectionName);
+	pNewSection->Characteristics = g_SectionHeader[0].Characteristics;
+	pNewSection->VirtualAddress = SizeOfImage;
+	pNewSection->Misc.VirtualSize = ShellSectionSize;
+	pNewSection->PointerToRawData = SizeOfFile;
+	pNewSection->SizeOfRawData = ShellSectionSize;
+	
+	// 文件数据
+		// IMAGE大小
+	g_NtHeaders->OptionalHeader.SizeOfImage = NewImageSize;
+
+		// 节的个数
+	g_NtHeaders->FileHeader.NumberOfSections++;
+
+	if (!SaveBufferToFile("D:\\code\\CTF\\re\\PeCon\\Debug\\InstDrv_modifer.exe", g_lpFileBuffer, NewFileSize)) {
+		printf("Save file fail\n");
+		return VOID();
+	}
+	
+	printf("Add New Section Success!@!\n");
+	printf("New Section Name is %s\n", NewSectionName);
 	return VOID();
 }
 
