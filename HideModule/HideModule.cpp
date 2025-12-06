@@ -8,6 +8,8 @@
 #include "PETools.h"
 
 
+
+
 WORD FindPIDByName(const char* TargeName){
 	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
 	if (hSnapshot == INVALID_HANDLE_VALUE) {
@@ -39,7 +41,8 @@ int main() {
 	
 	// D:\code\CTF\re\PeCon\Debug\IDEdll.dll
 	// D:\code\CTF\re\PeCon\x64\Debug\IDEdll.dll
-	 
+	CreateShellcode();
+	exit(0);
 	char libpath[MAX_PATH] = { 0 };
 	char TargetName[MAX_PATH] = { 0 };
 	WORD TargetPID = 65535;
