@@ -1,6 +1,7 @@
 #ifdef _WIN64
 #include "PETools.h"
 #include <stdio.h>
+#include <Windows.h>
 
 
 //0x10 bytes (sizeof)
@@ -89,6 +90,7 @@ struct _TEB
 EXTERN_C VOID Shellcode(void);
 
 INT CreateShellcode(void) {
+
     printf("DataDirectory is 0x%p\n",offsetof(IMAGE_OPTIONAL_HEADER, DataDirectory));
     printf("NumberOfNames 0x%p\n", offsetof(IMAGE_EXPORT_DIRECTORY, NumberOfNames));
     printf("AddressOfFunctions 0x%p\n", offsetof(IMAGE_EXPORT_DIRECTORY, AddressOfFunctions));
