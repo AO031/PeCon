@@ -168,10 +168,54 @@ findLGLoop:
 ExitFindLoadAndGet:
 
     add rsp, 60h
+    ; --- 在栈上构造字符串 "User32.dll" (偏移从 0x20 开始，留在影子空间之后) ---
+    mov byte ptr [rsp+20h], "U"
+    mov byte ptr [rsp+21h], "s"
+    mov byte ptr [rsp+22h], "e"
+    mov byte ptr [rsp+23h], "r"
+    mov byte ptr [rsp+24h], "3"
+    mov byte ptr [rsp+25h], "2"
+    mov byte ptr [rsp+26h], "."
+    mov byte ptr [rsp+27h], "d"
+    mov byte ptr [rsp+28h], "l"
+    mov byte ptr [rsp+29h], "l"
+    mov byte ptr [rsp+2Ah], 0
+    mov byte ptr [rsp+2Bh], "M"   ; 第二个参数：指向 "MessageBoxA"
+    mov byte ptr [rsp+2Ch], "e"
+    mov byte ptr [rsp+2Dh], "s"
+    mov byte ptr [rsp+2Eh], "s"
+    mov byte ptr [rsp+2Fh], "a"
+    mov byte ptr [rsp+30h], "g"
+    mov byte ptr [rsp+31h], "e"
+    mov byte ptr [rsp+32h], "B"
+    mov byte ptr [rsp+33h], "o"
+    mov byte ptr [rsp+34h], "x"
+    mov byte ptr [rsp+35h], "A"
+    mov byte ptr [rsp+36h], 0
+    mov qword ptr [rsp+40h], r8
+    mov qword ptr [rsp+48h], r9
 
+    ; --- 调用 LoadLibraryA("User32.dll") ---
+    lea rcx, [rsp+20h]              ; 第一个参数：指向 "User32.dll"
+    mov r8, qword ptr [rsp+40h]
+    call r8                         ; 调用 LoadLibraryA (地址在R8中)
+                                    ; 此时 rsp 指向分配的开始位置，其后的0x20字节就是预留的影子空间
+
+    ; --- 调用 GetProcAddress(hUser32, "MessageBoxA") ---
+    mov rcx, rax                    ; 第一个参数：User32.dll的模块句柄 (来自上一步的RAX)
+    lea rdx, [rsp+2Bh]              ; 第二个参数：指向 "MessageBoxA"
+    mov r9, qword ptr [rsp+48h]
+    call r9                         ; 调用 GetProcAddress (地址在R9中)
+
+    ; --- 清理栈空间并返回 ---
+    add rsp, 60h                    ; 恢复栈指针
      
     ; rax 现在存放 MessageBoxA 的地址
-
+    xor rcx, rcx
+    xor rdx, rdx
+    xor r8, r8
+    xor r9, r9
+    call rax
 
     mov rsp, rbp
     pop r9
